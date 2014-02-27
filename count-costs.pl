@@ -33,7 +33,7 @@ GetOptions(
 	'p=s' => \$path ,
 	'f=s' => \$fname,
 	't=s' => \$tracker,
-	'a=s' => \@authors, # Filter out 
+	'a=s' => \@authors, # Filter out by author names
 );
 
 my $tmp_fname = 0;
