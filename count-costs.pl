@@ -7,6 +7,7 @@
 use 5.010;
 use strict;
 use warnings;
+use utf8;
 
 use Getopt::Long;
 use File::Temp qw/tempfile/;
@@ -17,31 +18,51 @@ sub tmpfile;
 
 my $range =  '';
 my $path  = '.';
+my $fname =  '';
 
 GetOptions(
 	'r=s' => \$range,
 	'p=s' => \$path ,
+	'f=s' => \$fname,
 );
 
-my $svn       = which('svn') // die 'Unable to locate svn command';
-my $log_fname = tmpfile;
+if (!length $fname) {
+	$fname  = tmpfile;
+	my $svn = which('svn') // die 'Unable to locate svn command and log file is not specified';
+	`$svn log --xml --revision $range $path >"$fname"`;
+}
 
-`$svn log --xml --revision $range $path >"$log_fname"`;
-
-# at most one div will be loaded in memory
-my $twig=XML::Twig->new(  
+my $commit = {};
+my $twig   = XML::Twig->new(  
 	twig_handlers => {
 		logentry => sub {
-			say $_->{att}{revision};
+			$commit->{number} = $_->{att}{revision};
+			say join ', ', (
+				$commit->{number},
+				$commit->{date}  ,
+				$commit->{author},
+				$commit->{time}  ,
+				join('; ', @{$commit->{tickets}}),
+			);
 		},
-		'logentry/author' => sub {
-			say $_->text;
-		}, # change para to p
+		'logentry/author' => sub { $commit->{author} = $_->text; },
+		'logentry/date'   => sub { $commit->{date}   = $_->text; },
+		'logentry/msg'    => sub {
+			my $message        = $_->text;
+			$commit->{tickets} = [];
+			$commit->{time}    =  0;
+			while ($message =~ /#(\d+)/sg) {
+				push @{$commit->{tickets}}, $1;
+			}
+			while ($message =~ /(?:время|time):\s*([.,\d]+)\s*(?:ч(?:\.|ас(?:\.|а|ов)?)|h(?:ours?)?)/sgi) {
+				$commit->{time} += $1;
+			}
+		},
 	},
 );
-$twig->parsefile($log_fname);
+$twig->parsefile($fname);
 
-unlink $log_fname;
+#unlink $fname;
 
 exit;
 
