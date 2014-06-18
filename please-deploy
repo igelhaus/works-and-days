@@ -1,0 +1,238 @@
+#!/usr/bin/perl
+#
+# Script for automating deployment routine
+# 
+# Features:
+#  * Extracts the most recent version and list of cnhages from the project's Changelog
+#  * Tags release, if needed
+#  * Posts a deploy ticket to RT
+#  
+# A bit more on posting tickets.
+# Tickets are posted using rt command-line tool:
+#   * For apt users: rt4-clients
+#   * For CPAN addicts: http://metacpan.org/pod/RT::Client::CLI
+# Do not forget to specify "externalauth 1" in ~/.rtrc if needed.
+# 
+# NB! Currently this script does *not* prove your release, but you never ask for deployment
+# unless you have run and re-run the entire test suite, right? :)
+#
+
+use 5.010;
+use strict;
+use warnings;
+
+use Cwd qw/getcwd/;
+use Getopt::Long;
+
+# Necessary prototypes to help the interpreter:
+sub setup_environment;
+sub find_changelog;
+sub message;
+sub error;
+
+my $DRY_RUN         = 0;
+my $FNAME_CHANGELOG = '';
+my $DEPLOY_MESSAGE  = '';
+
+GetOptions(
+    'dry-run'     => \$DRY_RUN,
+    'changelog=s' => \$FNAME_CHANGELOG,
+    'message=s'   => \$DEPLOY_MESSAGE,
+);
+
+my $env = setup_environment;
+
+if (!$env) {
+    error('Unclean environment, unable to go on');
+    exit 1;
+}
+
+my $changelog = parse_changelog() // exit 1;
+
+if ($env->{is_uetl}) {
+    message('u-ETL team will tag this release for you');
+} else {
+    if (find_tag($changelog->{version})) {
+        message("Release $changelog->{version} already tagged");
+    } else {
+        tag_release($changelog->{version});
+    }
+}
+
+my $deploy_request = create_deploy_request($changelog);
+
+send_deploy_request($deploy_request);
+
+exit;
+
+sub setup_environment
+{
+    if (!-d './.hg') {
+        error('Not a valid hg repository');
+        return;
+    }
+
+    my $cwd = Cwd::getcwd;
+    my ($project, $uetl) = ($cwd =~ m|/([^/]+)(/u-?etl)?/?$|i);
+
+    if (!$project) {
+        error('Unable to calculate project name');
+        return;
+    }
+
+    return {
+        project => $project,
+        is_uetl => $uetl? 1 : 0,
+        has_rt  => length(`which rt`)? 1 : 0,
+    };
+}
+
+sub parse_changelog
+{
+    my $fname = find_changelog;
+    
+    if (!$fname) {
+        return;
+    }
+
+    message("Parsing $fname");
+    my $version = '';
+    my @lines;
+
+    open my $FH_changelog, '<', $fname;
+    while (my $line = <$FH_changelog>) {
+        chomp $line;
+        if ($line =~ /^Version\s+(.+)$/i) {
+            last if length $version;
+            $version = $1;
+        } else {
+            push @lines, $line if length $version;
+        }
+    }
+    close $FH_changelog;
+
+    if (!length $version || !@lines) {
+        error('Unable to parse changelog');
+        return;
+    }
+
+    return {
+        version => $version,
+        text    => \@lines,
+    };
+}
+
+sub find_changelog
+{
+    if (length $FNAME_CHANGELOG && -e -f -r $FNAME_CHANGELOG) {
+        return $FNAME_CHANGELOG;
+    }
+
+    opendir my $FH_cwd, '.';
+    my @fname = grep { -f -r && /^changelog$/i } readdir $FH_cwd;
+    closedir $FH_cwd;
+
+    if (@fname != 1) {
+        error('Unable to find changelog');
+        return;
+    }
+
+    return $fname[0];
+}
+
+sub find_tag
+{
+    my $version = shift;
+
+    if (!-e -f -r './.hgtags') {
+        return 0;
+    }
+
+    open my $FH_hgtags, '<', './.hgtags';
+    while (my $tag = <$FH_hgtags>) {
+        chomp $tag;
+        my ($tag_name) = ($tag =~ /^\S+\s+(\S+)$/);
+        if ($tag_name && $tag_name eq $version) {
+            return 1;
+        }
+    }
+    close $FH_hgtags;
+    return 0;
+}
+
+sub tag_release
+{
+    my $version = shift;
+    
+    message("Setting tag $version");
+
+    if ($DRY_RUN) {
+        return 1;
+    }
+    `hg tag $version --message "Release $version" && hg push`;
+    
+    return 1;
+}
+
+sub create_deploy_request
+{
+    my $changelog = shift;
+
+    my $release_name = sprintf '%s %s %s',
+        $env->{project},
+        $env->{is_uetl}? 'uETL' : 'Lua',
+        $changelog->{version},
+    ;
+
+    my $subject        = "Deploy $release_name";
+    my $changelog_text = join "\n", map { /^ /? $_ : " $_" } @{$changelog->{text}};
+    my $deploy_request = <<REQUEST
+ Please deploy $release_name
+ 
+ Changelog:
+$changelog_text
+ $DEPLOY_MESSAGE
+
+ Feel free to ask any questions in case something is left unclear.
+REQUEST
+;
+    return {
+        subject => $subject,
+        message => $deploy_request,
+    };
+}
+
+sub send_deploy_request
+{
+    my $request = shift;
+
+    if (!$env->{has_rt}) {
+        message('WARNING! rt is not installed, please post manually:');
+    }
+    message('Posting to RT:');
+    message('Subject: ' . $request->{subject});
+    message('========================================');
+    message($request->{message});
+    message('========================================');
+
+    if ($DRY_RUN || !$env->{has_rt}) {
+        return 1;
+    }
+   `rt create -t ticket set queue=$env->{project} subject="$request->{subject}" text="$request->{message}"`;
+
+    return 1;
+}
+
+sub message
+{
+    my $message = shift // '';
+    say STDOUT $message;
+    return 1;
+}
+
+sub error
+{
+    my $message = shift // '';
+    say STDERR $message;
+    return;
+}
