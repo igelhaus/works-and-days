@@ -169,8 +169,8 @@ sub tag_release
     if ($DRY_RUN) {
         return 1;
     }
-    `hg tag $version --message "Release $version" && hg push`;
-    
+    `hg tag --message "Release $version" $version && hg push`;
+
     return 1;
 }
 
@@ -187,7 +187,7 @@ sub create_deploy_request
     my $subject        = "Deploy $release_name";
     my $changelog_text = join "\n", map { /^ /? $_ : " $_" } @{$changelog->{text}};
     my $deploy_request = <<REQUEST
- Please deploy $release_name
+ Please deploy $release_name. Please start on staging.
  
  Changelog:
 $changelog_text
@@ -209,7 +209,7 @@ sub send_deploy_request
     if (!$env->{has_rt}) {
         message('WARNING! rt is not installed, please post manually:');
     }
-    message('Posting to RT:');
+    message("Posting to RT in queue $env->{project}:");
     message('Subject: ' . $request->{subject});
     message('========================================');
     message($request->{message});
