@@ -21,6 +21,7 @@ sub new_commit_entry;
 sub process_commit_entry;
 sub which;
 sub tmpfile;
+sub error;
 
 my $range   =  '';
 my $path    = '.';
@@ -36,40 +37,58 @@ GetOptions(
 	'a=s' => \@authors, # Filter out by author names
 );
 
-my $tmp_fname = 0;
-if (!length $fname) {
-	$tmp_fname = 1;
-	$fname     = tmpfile;
-	my $svn    = which('svn') // die 'Unable to locate svn command and log file is not specified';
+if (!length $range) {
+	error(<<SYNOPSIS
+USAGE
+
+perl $0 -r rev1:rev2 [-p /path/to/svn/repository/root] [-f /path/to/svn/log.xml] [-t http://tracker-root.org/] [-a authorlogin]*
+SYNOPSIS
+	);
+}
+
+my $uses_tmpfile = 0;
+
+if (length $fname && !-e -f -r) {
+	error("Log file '$fname' is not accessible");
+} elsif (!length $fname) {
+	if (!-d "$path/.svn") {
+		error("Unable to find Subversion repository in $path");
+	}
+	$uses_tmpfile = 1;
+	$fname        = tmpfile;
+	my $svn       = which('svn') // error('Unable to locate svn command and log file is not specified');
 	`$svn log --xml --revision $range $path >"$fname"`;
+}
+
+if (-z $fname) {
+	unlink $fname if $uses_tmpfile;
+	error('Log file is empty');
 }
 
 print_header;
 
 my $commit = new_commit_entry;
-my $twig   = XML::Twig->new(  
-	twig_handlers => {
-		logentry => sub {
-			$commit->{number} = $_->{att}{revision};
-			process_commit_entry($commit);
-			$commit = new_commit_entry;
-		},
-		'logentry/author' => sub { $commit->{author} = $_->text; },
-		'logentry/date'   => sub { $commit->{date}   = $_->text; },
-		'logentry/msg'    => sub {
-			my $message        = $_->text;
-			while ($message =~ /#(\d+)/sg) {
-				push @{$commit->{tickets}}, $1;
-			}
-			while ($message =~ /(?:время|time):\s*([.,\d]+)\s*(?:ч(?:\.|ас(?:\.|а|ов)?)|h(?:ours?)?)/sgi) {
-				$commit->{spent} += $1;
-			}
-		},
+my $twig   = XML::Twig->new(twig_handlers => {
+	logentry => sub {
+		$commit->{number} = $_->{att}{revision};
+		process_commit_entry($commit);
+		$commit = new_commit_entry;
 	},
-);
+	'logentry/author' => sub { $commit->{author} = $_->text; },
+	'logentry/date'   => sub { $commit->{date}   = $_->text; },
+	'logentry/msg'    => sub {
+		my $message = $_->text;
+		while ($message =~ /#(\d+)/sg) {
+			push @{$commit->{tickets}}, $1;
+		}
+		while ($message =~ /(?:время|time):\s*([.,\d]+)\s*(?:ч(?:\.|ас(?:\.|а|ов)?)|h(?:ours?)?)/sgi) {
+			$commit->{spent} += $1;
+		}
+	},
+});
 $twig->parsefile($fname);
 
-unlink $fname if $tmp_fname;
+unlink $fname if $uses_tmpfile;
 
 exit;
 
@@ -131,4 +150,11 @@ sub tmpfile
 {
 	(undef, my $fname) = File::Temp::tempfile('count-costs-XXXXXXXXXX', TMPDIR => 1, OPEN => 0);
 	return $fname;
+}
+
+sub error
+{
+	my $message = shift // '';
+	say STDERR $message;
+	exit 1;
 }
