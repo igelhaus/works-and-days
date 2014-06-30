@@ -84,6 +84,9 @@ my $twig   = XML::Twig->new(twig_handlers => {
 		while ($message =~ /(?:время|time):\s*([.,\d]+)\s*(?:ч(?:\.|ас(?:\.|а|ов)?)|h(?:ours?)?)/sgi) {
 			$commit->{spent} += $1;
 		}
+		while ($message =~ /(?:время|time):\s*([.,\d]+)\s*(?:м\.?|мин\.?|минут|минуты|m\.?|min\.?|minutes)/sgi) {
+			$commit->{spent} += 0+ sprintf q/%.02f/, $1/60;
+		}
 	},
 });
 $twig->parsefile($fname);
