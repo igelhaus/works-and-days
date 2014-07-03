@@ -3,7 +3,7 @@
 # Script for automating deployment routine
 # 
 # Features:
-#  * Extracts the most recent version and list of cnhages from the project's Changelog
+#  * Extracts the most recent version and list of changes from the project's Changelog
 #  * Tags release, if needed
 #  * Posts a deploy ticket to RT
 #  
