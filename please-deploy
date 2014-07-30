@@ -184,10 +184,11 @@ sub create_deploy_request
         $changelog->{version},
     ;
 
+    my $staging_note   = $env->{is_uetl}? '' : ' Please start on staging.';
     my $subject        = "Deploy $release_name";
     my $changelog_text = join "\n", map { /^ /? $_ : " $_" } @{$changelog->{text}};
     my $deploy_request = <<REQUEST
- Please deploy $release_name. Please start on staging.
+ Please deploy $release_name.$staging_note
  
  Changelog:
 $changelog_text
