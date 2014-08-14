@@ -24,20 +24,26 @@ use warnings;
 use Cwd qw/getcwd/;
 use Getopt::Long;
 
+use constant {
+    DEPLOYMENT_BRANCH => 'default',
+};
+
 # Necessary prototypes to help the interpreter:
 sub setup_environment;
 sub find_changelog;
 sub message;
 sub error;
 
-my $DRY_RUN         = 0;
-my $FNAME_CHANGELOG = '';
-my $DEPLOY_MESSAGE  = '';
+my $DRY_RUN           =  0;
+my $FNAME_CHANGELOG   = '';
+my $DEPLOY_MESSAGE    = '';
+my $DEPLOY_NONDEFAULT =  0;
 
 GetOptions(
-    'dry-run'     => \$DRY_RUN,
-    'changelog=s' => \$FNAME_CHANGELOG,
-    'message=s'   => \$DEPLOY_MESSAGE,
+    'dry-run'                 => \$DRY_RUN,
+    'changelog=s'             => \$FNAME_CHANGELOG,
+    'message=s'               => \$DEPLOY_MESSAGE,
+    'deploy-from-non-default' => \$DEPLOY_NONDEFAULT,
 );
 
 my $env = setup_environment;
@@ -45,6 +51,15 @@ my $env = setup_environment;
 if (!$env) {
     error('Unclean environment, unable to go on');
     exit 1;
+}
+
+if ($env->{branch} ne DEPLOYMENT_BRANCH) {
+    if ($DEPLOY_NONDEFAULT) {
+        message("Deploying from non-default branch '$env->{branch}'");
+    } else {
+        error("Unable to deploy from branch '$env->{branch}'. Either checkout default or specify --deploy-from-non-default");
+        exit 1;
+    }
 }
 
 my $changelog = parse_changelog() // exit 1;
@@ -67,6 +82,11 @@ exit;
 
 sub setup_environment
 {
+    if (!length(`which hg`)) {
+        error('hg is not installed');
+        return;
+    }
+
     if (!-d './.hg') {
         error('Not a valid hg repository');
         return;
@@ -80,8 +100,12 @@ sub setup_environment
         return;
     }
 
+    my $branch = `hg branch`;
+    chomp $branch;
+
     return {
         project => $project,
+        branch  => $branch,
         is_uetl => $uetl? 1 : 0,
         has_rt  => length(`which rt`)? 1 : 0,
     };
